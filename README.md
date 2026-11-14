@@ -21,14 +21,20 @@ write on PDFs. Everything is stored on the device and works offline.
 
 ## Install on iPad
 
-1. Make sure the iPad is connected to Tailscale.
-2. In **Safari**, open `https://t3-edna-vps.tailc15cef.ts.net:8460/`
-3. Tap **Share → Add to Home Screen**.
-4. Open Inkfold from the Home Screen. After the first load it works offline (no Tailscale needed).
+1. In **Safari**, open **https://tandalalam.github.io/inkfold/**
+2. Tap **Share → Add to Home Screen**.
+3. Open Inkfold from the Home Screen. After the first load it works offline.
 
-Data lives in the Home Screen app's storage on the iPad, tied to the address it
-was installed from. Use **Settings (gear) → Back up library** regularly, and use
-the backup to move notes if the app's address ever changes.
+Every push to `main` rebuilds and redeploys the site (GitHub Actions → Pages); the
+installed app picks up the new version the next time it is opened online.
+
+A private copy is also served on the tailnet at `https://t3-edna-vps.tailc15cef.ts.net:8460/`
+(`sudo tailscale serve --bg --https=8460 $PWD/dist`, updated by `npm run build`).
+
+Data lives in the Home Screen app's storage on the iPad and is tied to the address
+it was installed from (each address above has its own separate notes). Use
+**Settings (gear) → Back up library** regularly, and back up / restore to move
+notes between addresses.
 
 ## Develop
 
@@ -41,9 +47,6 @@ node tests/e2e.mjs http://127.0.0.1:4173/      # end-to-end test (WebKit + Chrom
 node tests/offline.mjs http://127.0.0.1:4173/  # service-worker / offline test
 ```
 
-The Tailscale URL serves `dist/` directly (`sudo tailscale serve --bg --https=8460 $PWD/dist`),
-so `npm run build` deploys. The installed app picks up the new version the next
-time it is opened while online.
 
 ## Layout
 
