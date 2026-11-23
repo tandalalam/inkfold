@@ -17,9 +17,11 @@ import {
   Plus,
   Search,
   Settings,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
+import { askEnabled, setAskEnabled, probeAsk, useAsk } from '../ask/store';
 import { useLibrary, folderPath } from '../lib/library';
 import { navigate } from '../lib/router';
 import type { Folder, Notebook } from '../lib/types';
@@ -263,6 +265,26 @@ export function LibraryView({ folderId }: { folderId: string | null }) {
             if (res) {
               await lib().load();
               toast(`Restored ${res.notebooks} notebooks and ${res.folders} folders`);
+            }
+          },
+        },
+        {
+          label: askEnabled() ? 'Assistant (Ask) is on' : 'Turn on assistant (Ask)…',
+          icon: <Sparkles size={17} />,
+          checked: askEnabled(),
+          separator: true,
+          onSelect: async () => {
+            if (askEnabled()) {
+              setAskEnabled(false);
+              toast('Assistant turned off');
+              return;
+            }
+            setAskEnabled(true);
+            const ok = await probeAsk(true);
+            if (ok) toast(`Connected to “${useAsk.getState().thread?.title ?? 'thread'}”`);
+            else {
+              setAskEnabled(false);
+              toast('Could not reach the assistant. It only works on the owner’s tailnet.', true);
             }
           },
         },

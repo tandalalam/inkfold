@@ -1,9 +1,9 @@
-import type { Folder, Notebook, Page, StoredFile } from './types';
+import type { AskRecord, Folder, Notebook, Page, StoredFile } from './types';
 
 const DB_NAME = 'inkfold';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
-type StoreName = 'folders' | 'notebooks' | 'pages' | 'files';
+type StoreName = 'folders' | 'notebooks' | 'pages' | 'files' | 'asks';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -21,6 +21,7 @@ function openDb(): Promise<IDBDatabase> {
         pages.createIndex('fileId', 'fileId');
       }
       if (!db.objectStoreNames.contains('files')) db.createObjectStore('files', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('asks')) db.createObjectStore('asks', { keyPath: 'id' }).createIndex('notebookId', 'notebookId');
     };
     req.onsuccess = () => {
       const db = req.result;
@@ -103,6 +104,9 @@ export const db = {
   putFiles: (f: StoredFile[]) => putMany('files', f),
   deleteFiles: (ids: string[]) => deleteMany('files', ids),
   fileUseCount: (fileId: string) => countByIndex('pages', 'fileId', fileId),
+  allAsks: () => getAll<AskRecord>('asks'),
+  putAsks: (a: AskRecord[]) => putMany('asks', a),
+  deleteAsks: (ids: string[]) => deleteMany('asks', ids),
 };
 
 /** Ask the browser not to evict our data under storage pressure. */

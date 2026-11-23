@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Notebook, Page, Stroke } from '../lib/types';
+import type { Notebook, Page, Rect, Stroke } from '../lib/types';
 import { db } from '../lib/db';
 import { deletePagesAndOrphans, useLibrary } from '../lib/library';
 import { renderThumbnail } from '../lib/thumbnails';
@@ -11,9 +11,19 @@ type HistoryEntry =
 
 export interface Selection {
   pageId: string;
+  /** selected strokes (empty for a region-only selection) */
   ids: string[];
   dx: number;
   dy: number;
+  /** bounds of the lasso that was drawn, in page units */
+  area?: Rect;
+}
+
+/** A spot where a Paste bubble is shown (page units). */
+export interface PasteSpot {
+  pageId: string;
+  x: number;
+  y: number;
 }
 
 interface EditorState {
@@ -23,9 +33,12 @@ interface EditorState {
   undoStack: HistoryEntry[];
   redoStack: HistoryEntry[];
   selection: Selection | null;
+  pasteSpot: PasteSpot | null;
+  /** briefly highlights a region (e.g. when jumping to an ask's clip) */
+  flash: { pageId: string; rect: Rect; nonce: number } | null;
   currentPage: number;
-  /** bumps when pages should scroll into view: [index, nonce] */
-  scrollRequest: [number, number] | null;
+  /** bumps when pages should scroll into view: [index, nonce, page-unit y to centre (optional)] */
+  scrollRequest: [number, number, number?] | null;
   open: (id: string) => Promise<boolean>;
   close: () => Promise<void>;
   setStrokes: (pageId: string, strokes: Stroke[], record?: boolean, before?: Stroke[]) => void;
@@ -34,9 +47,11 @@ interface EditorState {
   undo: () => void;
   redo: () => void;
   select: (sel: Selection | null) => void;
+  setPasteSpot: (spot: PasteSpot | null) => void;
+  flashRect: (pageId: string, rect: Rect) => void;
   setTitle: (title: string) => void;
   setCurrentPage: (i: number) => void;
-  scrollToPage: (i: number) => void;
+  scrollToPage: (i: number, y?: number) => void;
 }
 
 const dirtyPages = new Set<string>();
@@ -149,6 +164,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   undoStack: [],
   redoStack: [],
   selection: null,
+  pasteSpot: null,
+  flash: null,
   currentPage: 0,
   scrollRequest: null,
 
@@ -164,7 +181,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     notebookDirty = false;
     firstPageAtOpen = order[0] ?? null;
     coverDirty = !nb.cover || !!nb.coverStale;
-    set({ notebook: nb, pages: map, order, undoStack: [], redoStack: [], selection: null, currentPage: 0, scrollRequest: null });
+    set({ notebook: nb, pages: map, order, undoStack: [], redoStack: [], selection: null, pasteSpot: null, flash: null, currentPage: 0, scrollRequest: null });
     return true;
   },
 
@@ -241,7 +258,9 @@ export const useEditor = create<EditorState>((set, get) => ({
     applyEntry(e, 'redo');
   },
 
-  select: (selection) => set({ selection }),
+  select: (selection) => set({ selection, pasteSpot: null }),
+  setPasteSpot: (pasteSpot) => set({ pasteSpot }),
+  flashRect: (pageId, rect) => set({ flash: { pageId, rect, nonce: Math.random() } }),
 
   setTitle: (title) => {
     const nb = get().notebook;
@@ -254,7 +273,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (get().currentPage !== i) set({ currentPage: i });
   },
 
-  scrollToPage: (i) => set({ scrollRequest: [i, Math.random()] }),
+  scrollToPage: (i, y) => set({ scrollRequest: [i, Math.random(), y] }),
 }));
 
 // Persist when the app is backgrounded (iPad may kill it without warning).

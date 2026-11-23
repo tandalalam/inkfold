@@ -19,8 +19,13 @@ interface ToolState {
   hlPalette: string[];
   shapeSnap: boolean;
   fingerDraw: boolean;
+  /** floating pen/eraser switch (stands in for Pencil double-tap, which Safari doesn't expose) */
+  quickSwitch: boolean;
+  /** tool to return to from the eraser */
+  lastInk: 'pen' | 'hl';
   setTool: (t: Tool) => void;
-  set: (patch: Partial<Omit<ToolState, 'set' | 'setTool'>>) => void;
+  toggleEraser: () => void;
+  set: (patch: Partial<Omit<ToolState, 'set' | 'setTool' | 'toggleEraser'>>) => void;
 }
 
 const KEY = 'inkfold.tools.v1';
@@ -33,7 +38,7 @@ function loadSaved(): Partial<ToolState> {
   }
 }
 
-export const useTools = create<ToolState>((set) => ({
+export const useTools = create<ToolState>((set, get) => ({
   tool: 'pen',
   pen: { color: PEN_COLORS[0], size: PEN_SIZES[1], style: 'ball' },
   hl: { color: HL_COLORS[0], size: HL_SIZES[1] },
@@ -42,12 +47,22 @@ export const useTools = create<ToolState>((set) => ({
   hlPalette: HL_COLORS,
   shapeSnap: true,
   fingerDraw: false,
+  quickSwitch: true,
+  lastInk: 'pen',
   ...loadSaved(),
-  setTool: (tool) => set({ tool }),
+  setTool: (tool) => set(tool === 'pen' || tool === 'hl' ? { tool, lastInk: tool } : { tool }),
+  toggleEraser: () => {
+    const s = get();
+    set(s.tool === 'eraser' ? { tool: s.lastInk } : { tool: 'eraser', lastInk: s.tool === 'hl' ? 'hl' : s.tool === 'pen' ? 'pen' : s.lastInk });
+  },
   set: (patch) => set(patch),
 }));
 
 useTools.subscribe((s) => {
-  const { tool, pen, hl, eraser, penPalette, hlPalette, shapeSnap, fingerDraw } = s;
-  localStorage.setItem(KEY, JSON.stringify({ tool, pen, hl, eraser, penPalette, hlPalette, shapeSnap, fingerDraw }));
+  const { tool, pen, hl, eraser, penPalette, hlPalette, shapeSnap, fingerDraw, quickSwitch, lastInk } = s;
+  try {
+    localStorage.setItem(KEY, JSON.stringify({ tool, pen, hl, eraser, penPalette, hlPalette, shapeSnap, fingerDraw, quickSwitch, lastInk }));
+  } catch {
+    /* storage full or blocked */
+  }
 });

@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import type { Page, Stroke } from '../lib/types';
 import { HL_OPACITY, centerlinePath, penPath, shapePressure, strokePath } from '../lib/ink';
-import { compactPoints, eraseFromStroke, strokeHitBySegment, strokeInLasso } from '../lib/geometry';
+import { compactPoints, eraseFromStroke, polygonBounds, strokeHitBySegment, strokeInLasso } from '../lib/geometry';
 import { recognizeShape } from '../lib/shapes';
 import { PAPER_COLORS, templateGeometry } from '../lib/templates';
 import { cappedScale, releaseCanvas, renderPdfPage } from '../lib/pdf';
@@ -10,6 +10,13 @@ import { useEditor, type Selection } from './store';
 import { useTools } from './tools';
 import { inputState } from './input';
 import { SelectionBox } from './SelectionBox';
+import { ClipboardPaste, Sparkles } from 'lucide-react';
+import { useClipboard, pasteStrokes } from './clipboard';
+import { tapProps } from '../ui/tap';
+import { useAsk, isPending } from '../ask/store';
+
+/** Elements on a page that handle their own input (the page must not draw under them). */
+export const PAGE_UI = '.selection-box, .selection-bar, .paste-bubble, .ask-badge';
 
 interface Props {
   pageId: string;
@@ -215,10 +222,17 @@ export const PageView = memo(function PageView({ pageId, index, left, top, width
       } else if (m === 'eraser') {
         if (commit && erasing !== eraseBefore) ed.setStrokes(pageId, erasing, true, eraseBefore);
         else if (!commit) ed.setStrokes(pageId, eraseBefore, false);
-      } else if (m === 'lasso') {
-        if (commit && pts.length >= 6) {
+      } else if (m === 'lasso' && commit) {
+        const area = pts.length >= 2 ? polygonBounds(pts) : null;
+        const tiny = !area || pts.length < 6 || (area.w < 8 && area.h < 8);
+        if (tiny) {
+          // A tap with the lasso: offer Paste there.
+          if (useClipboard.getState().clip && area) ed.setPasteSpot({ pageId, x: area.x, y: area.y });
+        } else {
           const ids = current.strokes.filter((s) => strokeInLasso(s, pts)).map((s) => s.id);
-          ed.select(ids.length ? { pageId, ids, dx: 0, dy: 0 } : null);
+          if (ids.length) ed.select({ pageId, ids, dx: 0, dy: 0, area });
+          // Circling an empty area (e.g. printed PDF text) selects the region so it can be asked about.
+          else if (useAsk.getState().available && area.w > 12 && area.h > 12) ed.select({ pageId, ids: [], dx: 0, dy: 0, area });
         }
       }
       pts = [];
@@ -256,7 +270,7 @@ export const PageView = memo(function PageView({ pageId, index, left, top, width
     const onDown = (e: PointerEvent) => {
       if (inputState.pinching || pointerId !== null) return;
       // The selection box and its toolbar handle their own input.
-      if ((e.target as Element).closest?.('.selection-box, .selection-bar')) return;
+      if ((e.target as Element).closest?.(PAGE_UI)) return;
       const tools = useTools.getState();
       const type = e.pointerType;
       if (!(type === 'pen' || type === 'mouse' || (type === 'touch' && tools.fingerDraw))) return;
@@ -278,6 +292,7 @@ export const PageView = memo(function PageView({ pageId, index, left, top, width
       snapped = false;
       const ed = useEditor.getState();
       if (ed.selection) ed.select(null);
+      if (ed.pasteSpot) ed.setPasteSpot(null);
       mode = tools.tool;
       inputState.active = { pointerType: type, cancel: () => end(false) };
       if (mode === 'pen' || mode === 'hl') {
@@ -360,7 +375,60 @@ export const PageView = memo(function PageView({ pageId, index, left, top, width
         <path ref={overlay} className="lasso-path" fill="rgba(60,120,220,0.06)" stroke="#3c78dc" strokeWidth={1.2 / scale} strokeDasharray={`${5 / scale} ${4 / scale}`} />
         <circle ref={eraserCircle} r={0} className="eraser-cursor" strokeWidth={1 / scale} />
       </svg>
+      <AskBadges pageId={pageId} scale={scale} />
+      <Flash pageId={pageId} scale={scale} />
       {selection && <SelectionBox page={page} selection={selection} scale={scale} />}
+      <PasteBubble pageId={pageId} scale={scale} />
     </div>
   );
 });
+
+function PasteBubble({ pageId, scale }: { pageId: string; scale: number }) {
+  const spot = useEditor((s) => (s.pasteSpot?.pageId === pageId ? s.pasteSpot : null));
+  if (!spot) return null;
+  const paste = () => {
+    useEditor.getState().setPasteSpot(null);
+    pasteStrokes(pageId, spot.x, spot.y);
+  };
+  return (
+    <button className="paste-bubble" style={{ left: spot.x * scale, top: spot.y * scale }} {...tapProps(paste)}>
+      <ClipboardPaste size={16} /> Paste
+    </button>
+  );
+}
+
+function Flash({ pageId, scale }: { pageId: string; scale: number }) {
+  const flash = useEditor((s) => (s.flash?.pageId === pageId ? s.flash : null));
+  if (!flash) return null;
+  const r = flash.rect;
+  return <div key={flash.nonce} className="clip-flash" style={{ left: r.x * scale, top: r.y * scale, width: r.w * scale, height: r.h * scale }} />;
+}
+
+/** Small markers where questions were asked; tap to open the answer. */
+function AskBadges({ pageId, scale }: { pageId: string; scale: number }) {
+  const asks = useAsk((s) => s.asks);
+  const available = useAsk((s) => s.available);
+  const marks: { id: string; n: number; x: number; y: number; pending: boolean }[] = [];
+  if (available !== false)
+    for (const a of asks)
+      a.clips.forEach((c, i) => {
+        if (c.pageId === pageId) marks.push({ id: a.id, n: i + 1, x: c.rect.x + c.rect.w, y: c.rect.y, pending: isPending(a) });
+      });
+  if (!marks.length) return null;
+  const open = (id: string) => useAsk.setState({ panelOpen: true, focusId: id });
+  return (
+    <>
+      {marks.map((m) => (
+        <button
+          key={`${m.id}-${m.n}`}
+          className={`ask-badge ${m.pending ? 'pending' : ''}`}
+          style={{ left: m.x * scale - 11, top: m.y * scale - 11 }}
+          aria-label="Show answer"
+          {...tapProps(() => open(m.id))}
+        >
+          <Sparkles size={12} />
+        </button>
+      ))}
+    </>
+  );
+}

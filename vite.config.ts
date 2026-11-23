@@ -29,9 +29,10 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,mjs,css,html,png,svg,bcmap,pfb,ttf,wasm,icc,webmanifest}'],
+        globPatterns: ['**/*.{js,mjs,css,html,png,svg,bcmap,pfb,ttf,woff2,wasm,icc,webmanifest}'],
         maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
         navigateFallback: 'index.html',
+        navigateFallbackDenylist: [/\/api\//],
       },
     }),
   ],

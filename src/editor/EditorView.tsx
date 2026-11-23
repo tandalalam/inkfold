@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Copy, FileDown, FileText, Hand, Maximize, Trash2, FilePlus2, LayoutTemplate } from 'lucide-react';
+import { ArrowDown, ArrowUp, Copy, Eraser, FileDown, FileText, Hand, Highlighter, Maximize, PenLine, Trash2, FilePlus2, LayoutTemplate, Repeat } from 'lucide-react';
 import type { Page, Template, Paper } from '../lib/types';
 import { navigate } from '../lib/router';
 import { db, uid } from '../lib/db';
@@ -13,7 +13,10 @@ import { useEditor, flush } from './store';
 import { useTools } from './tools';
 import { inputState, cancelFingerInput } from './input';
 import { computeLayout, contentToPage, pageAt, pageToContent, MAX_ZOOM, MIN_ZOOM, type Layout } from './layout';
-import { PageView } from './PageView';
+import { PageView, PAGE_UI } from './PageView';
+import { copyStrokes, pasteStrokes } from './clipboard';
+import { AskPanel } from '../ask/AskPanel';
+import { useAsk, probeAsk, loadAsks } from '../ask/store';
 import { Toolbar } from './Toolbar';
 import { PageSidebar } from './PageSidebar';
 
@@ -60,6 +63,14 @@ export function EditorView({ notebookId }: { notebookId: string }) {
   }, [notebookId]);
 
   useEffect(() => localStorage.setItem('inkfold.sidebar', sidebarOpen ? '1' : '0'), [sidebarOpen]);
+
+  // The assistant is only reachable on the owner's tailnet; elsewhere this quietly fails.
+  useEffect(() => {
+    void probeAsk().then((ok) => {
+      if (ok) void loadAsks();
+    });
+  }, []);
+  const askOpen = useAsk((s) => s.panelOpen && s.available === true);
 
   /* ---------------- layout ---------------- */
   const pages = useMemo(() => order.map((id) => pagesMap[id]).filter(Boolean) as Page[], [order, pagesMap]);
@@ -136,7 +147,11 @@ export function EditorView({ notebookId }: { notebookId: string }) {
   useEffect(() => {
     if (!scrollRequest || !scroller.current) return;
     const i = Math.min(scrollRequest[0], layout.tops.length - 1);
-    if (i >= 0) scroller.current.scrollTo({ top: layout.tops[i] - 12 });
+    const y = scrollRequest[2];
+    if (i >= 0)
+      scroller.current.scrollTo({
+        top: y === undefined ? layout.tops[i] - 12 : layout.tops[i] + y * layout.scale - scroller.current.clientHeight / 2,
+      });
   }, [scrollRequest]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ---------------- gestures: pinch zoom, two/three finger tap ---------------- */
@@ -173,8 +188,8 @@ export function EditorView({ notebookId }: { notebookId: string }) {
     const onStart = (e: TouchEvent) => {
       const stylus = Array.from(e.changedTouches).some((t) => t.touchType === 'stylus');
       if (stylus) {
-        // Pencil never scrolls; it only draws.
-        if (e.cancelable) e.preventDefault();
+        // Pencil never scrolls; it only draws. Buttons on the page must still get their tap.
+        if (e.cancelable && !(e.target as Element).closest?.(PAGE_UI)) e.preventDefault();
         return;
       }
       const f = fingers(e.touches);
@@ -183,14 +198,14 @@ export function EditorView({ notebookId }: { notebookId: string }) {
       if (f.length >= 2) {
         if (e.cancelable) e.preventDefault();
         if (!pinch) startPinch(f);
-      } else if (useTools.getState().fingerDraw && (e.target as Element).closest?.('.page') && !(e.target as Element).closest('.selection-box, .selection-bar')) {
+      } else if (useTools.getState().fingerDraw && (e.target as Element).closest?.('.page') && !(e.target as Element).closest(PAGE_UI)) {
         if (e.cancelable) e.preventDefault();
       }
     };
 
     const onMove = (e: TouchEvent) => {
       if (Array.from(e.changedTouches).some((t) => t.touchType === 'stylus')) {
-        if (e.cancelable) e.preventDefault();
+        if (e.cancelable && !(e.target as Element).closest?.(PAGE_UI)) e.preventDefault();
         return;
       }
       const f = fingers(e.touches);
@@ -267,10 +282,29 @@ export function EditorView({ notebookId }: { notebookId: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest?.('input, textarea')) return;
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+      const k = e.key.toLowerCase();
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && k === 'z') {
         e.preventDefault();
         if (e.shiftKey) useEditor.getState().redo();
         else useEditor.getState().undo();
+      } else if (mod && (k === 'c' || k === 'x')) {
+        const s = useEditor.getState();
+        const sel = s.selection;
+        if (!sel?.ids.length) return;
+        e.preventDefault();
+        const ids = new Set(sel.ids);
+        const page = s.pages[sel.pageId];
+        copyStrokes(page.strokes.filter((st) => ids.has(st.id)));
+        if (k === 'x') {
+          s.setStrokes(sel.pageId, page.strokes.filter((st) => !ids.has(st.id)));
+          s.select(null);
+        }
+      } else if (mod && k === 'v') {
+        e.preventDefault();
+        pasteIntoView();
+      } else if (!mod && k === 'e') {
+        useTools.getState().toggleEraser();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -414,9 +448,27 @@ export function EditorView({ notebookId }: { notebookId: string }) {
       separator: items.length > 0,
       onSelect: () => useTools.getState().set({ fingerDraw: !fingerDraw }),
     });
+    const quickSwitch = useTools.getState().quickSwitch;
+    items.push({
+      label: 'Pen/eraser switch button',
+      icon: <Repeat size={17} />,
+      checked: quickSwitch,
+      onSelect: () => useTools.getState().set({ quickSwitch: !quickSwitch }),
+    });
     items.push({ label: 'Fit to width', icon: <Maximize size={17} />, onSelect: () => fitWidth() });
     items.push({ label: 'Delete current page', icon: <Trash2 size={17} />, danger: true, separator: true, onSelect: () => deletePage(s.currentPage) });
     openMenu(anchor, items);
+  };
+
+  /** Pastes the clipboard in the middle of what is on screen. */
+  const pasteIntoView = () => {
+    const el = scroller.current;
+    const s = useEditor.getState();
+    if (!el || !s.order.length) return;
+    const a = contentToPage(layoutRef.current, el.scrollLeft + el.clientWidth / 2, el.scrollTop + el.clientHeight / 2);
+    const page = s.pages[s.order[a.index]];
+    if (!page) return;
+    pasteStrokes(page.id, Math.max(0, Math.min(page.width, a.u)), Math.max(0, Math.min(page.height, a.v)));
   };
 
   const fitWidth = () => {
@@ -458,8 +510,9 @@ export function EditorView({ notebookId }: { notebookId: string }) {
         onAddPage={(a) => addPageMenu(a)}
         onShare={shareMenu}
         onMore={moreMenu}
+        onPaste={pasteIntoView}
       />
-      <div className="editor-body">
+      <div className={`editor-body ${askOpen && status === 'ready' ? 'with-ask' : ''} ${sidebarOpen ? 'with-sidebar' : ''}`}>
         {sidebarOpen && status === 'ready' && <PageSidebar onPageMenu={pageMenu} onAddPage={(a) => addPageMenu(a, useEditor.getState().order.length - 1)} />}
         <div className="scroller" ref={scroller} onScroll={updateRange}>
           {status === 'ready' && (
@@ -488,7 +541,33 @@ export function EditorView({ notebookId }: { notebookId: string }) {
             {currentPage + 1} / {order.length}
           </div>
         )}
+        {status === 'ready' && <QuickSwitch />}
+        {askOpen && status === 'ready' && <AskPanel notebookId={notebookId} />}
       </div>
     </div>
+  );
+}
+
+/**
+ * Floating pen/eraser switch for the thumb of the hand holding the iPad.
+ * Safari doesn't tell web pages about Apple Pencil double-taps, so this is the
+ * closest substitute (the E key does the same with a keyboard).
+ */
+function QuickSwitch() {
+  const tool = useTools((s) => s.tool);
+  const lastInk = useTools((s) => s.lastInk);
+  const enabled = useTools((s) => s.quickSwitch);
+  if (!enabled) return null;
+  const erasing = tool === 'eraser';
+  const Icon = erasing ? (lastInk === 'hl' ? Highlighter : PenLine) : Eraser;
+  return (
+    <button
+      className={`quick-switch ${erasing ? 'erasing' : ''}`}
+      onClick={() => useTools.getState().toggleEraser()}
+      aria-label={erasing ? 'Back to pen' : 'Switch to eraser'}
+      title="Switch pen / eraser (E)"
+    >
+      <Icon size={22} />
+    </button>
   );
 }

@@ -1,11 +1,27 @@
-import type { Stroke } from './types';
+import type { Rect, Stroke } from './types';
 import { uid } from './db';
 
-export interface Rect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+export type { Rect };
+
+export function polygonBounds(poly: number[]): Rect {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i < poly.length; i += 2) {
+    minX = Math.min(minX, poly[i]);
+    maxX = Math.max(maxX, poly[i]);
+    minY = Math.min(minY, poly[i + 1]);
+    maxY = Math.max(maxY, poly[i + 1]);
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+export function unionRects(a: Rect, b: Rect): Rect {
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+}
+
+export function clampRect(r: Rect, w: number, h: number): Rect {
+  const x = Math.max(0, r.x), y = Math.max(0, r.y);
+  return { x, y, w: Math.max(1, Math.min(w, r.x + r.w) - x), h: Math.max(1, Math.min(h, r.y + r.h) - y) };
 }
 
 export function strokeBounds(s: Stroke): Rect {

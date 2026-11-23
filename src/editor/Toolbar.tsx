@@ -11,8 +11,12 @@ import {
   Redo2,
   Share,
   Shapes,
+  Sparkles,
+  ClipboardPaste,
   Undo2,
 } from 'lucide-react';
+import { useAsk } from '../ask/store';
+import { useClipboard } from './clipboard';
 import { ERASER_SIZES, HL_SIZES, PEN_SIZES, useTools, type Tool } from './tools';
 import { useEditor } from './store';
 
@@ -108,7 +112,7 @@ function ToolOptions() {
         <SizeDots sizes={ERASER_SIZES} value={t.eraser.size} scale={0.7} onChange={(size) => t.set({ eraser: { ...t.eraser, size } })} />
       </>
     );
-  return <span className="hint">Circle ink to select it, then drag to move</span>;
+  return <span className="hint">Circle ink to move, copy or ask about it. Tap a page to paste</span>;
 }
 
 export function Toolbar({
@@ -120,6 +124,7 @@ export function Toolbar({
   onAddPage,
   onShare,
   onMore,
+  onPaste,
 }: {
   title: string;
   onBack: () => void;
@@ -129,7 +134,12 @@ export function Toolbar({
   onAddPage: (anchor: HTMLElement) => void;
   onShare: (anchor: HTMLElement) => void;
   onMore: (anchor: HTMLElement) => void;
+  onPaste: () => void;
 }) {
+  const askAvailable = useAsk((s) => s.available === true);
+  const askOpen = useAsk((s) => s.panelOpen);
+  const askPending = useAsk((s) => s.tray.length);
+  const hasClip = useClipboard((s) => !!s.clip);
   const canUndo = useEditor((s) => s.undoStack.length > 0);
   const canRedo = useEditor((s) => s.redoStack.length > 0);
   const shapeSnap = useTools((s) => s.shapeSnap);
@@ -152,6 +162,22 @@ export function Toolbar({
         <button className="icon-btn" disabled={!canRedo} onClick={() => useEditor.getState().redo()} aria-label="Redo">
           <Redo2 size={21} />
         </button>
+        {hasClip && (
+          <button className="icon-btn" onClick={onPaste} aria-label="Paste" title="Paste (or tap a page with the lasso)">
+            <ClipboardPaste size={20} />
+          </button>
+        )}
+        {askAvailable && (
+          <button
+            className={`icon-btn ask-toggle ${askOpen ? 'active' : ''}`}
+            onClick={() => useAsk.setState({ panelOpen: !askOpen })}
+            aria-label="Ask"
+            aria-pressed={askOpen}
+          >
+            <Sparkles size={20} />
+            {askPending > 0 && <span className="dot-count">{askPending}</span>}
+          </button>
+        )}
         <button className="icon-btn" onClick={(e) => onAddPage(e.currentTarget)} aria-label="Add page">
           <Plus size={22} />
         </button>

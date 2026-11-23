@@ -70,3 +70,38 @@ export const PAPER_SIZES = {
   'square': { label: 'Square', width: 700, height: 700 },
 } as const;
 export type PaperSizeKey = keyof typeof PAPER_SIZES;
+
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** A region of a page sent along with a question. */
+export interface AskClip {
+  pageId: string;
+  /** 0-based page index when the clip was taken */
+  pageIndex: number;
+  rect: Rect;
+  /** small JPEG data URL for the panel */
+  thumb: string;
+}
+
+export type AskStatus = 'draft' | 'sending' | 'queued' | 'running' | 'recovering' | 'completed' | 'failed';
+
+/** A question sent to the assistant thread from a notebook. */
+export interface AskRecord {
+  id: string;
+  notebookId: string;
+  notebookTitle: string;
+  createdAt: number;
+  updatedAt: number;
+  question: string;
+  detail: 'short' | 'long';
+  clips: AskClip[];
+  status: AskStatus;
+  progress?: string[];
+  answer?: string | null;
+  error?: string | null;
+}
